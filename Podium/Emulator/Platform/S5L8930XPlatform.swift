@@ -184,7 +184,7 @@ final class S5L8930XPlatform: DeviceEventHandler {
 
     private func touch(_ phase: MultitouchN1.Phase, _ point: TouchPoint) {
         touch.touch(phase, x: point.x / Double(GuestMemoryLayout.framebufferWidth), y: point.y / Double(GuestMemoryLayout.framebufferHeight),
-                    time: milliseconds)
+                    touchID: point.touchID, time: milliseconds)
     }
 
     func deviceEventDue(at virtualTime: UInt64) {

@@ -65,12 +65,12 @@ final class DisplayScanout: FramebufferSource {
         guard buffer.count >= byteCount else { return }
         let output = buffer.bindMemory(to: UInt32.self)
         guard isLit else {
-            for index in 0..<(pixelWidth * pixelHeight) { output[index] = 0xFF00_0000 }
+            output.update(repeating: 0xFF00_0000)
             return
         }
         let layers = activeLayers
         guard !layers.isEmpty else { return bootFramebuffer.copyCurrentFrame(into: buffer) }
-        for index in 0..<(pixelWidth * pixelHeight) { output[index] = 0xFF00_0000 }
+        output.update(repeating: 0xFF00_0000)
         for (index, layer) in layers.enumerated() {
             draw(layer, into: output, blend: index > 0)
         }
@@ -123,11 +123,16 @@ final class DisplayScanout: FramebufferSource {
         return UnsafeRawPointer(region.pointer + Int(physical &- region.regionBaseAddress))
     }
 
+    /// RGB565 → 8-bit channel expansion. Integer division is the
+    /// composite's hottest cost (three divides per pixel, 614K pixels a
+    /// frame); the 5- and 6-bit inputs only have 32/64 values, so every
+    /// answer is precomputed once.
+    private static let red5: [UInt32] = (0..<32).map { UInt32($0 * 255 / 31) << 16 }
+    private static let green6: [UInt32] = (0..<64).map { UInt32($0 * 255 / 63) << 8 }
+    private static let blue5: [UInt32] = (0..<32).map { UInt32($0 * 255 / 31) }
+
     private static func bgra(fromRGB565 pixel: UInt16) -> UInt32 {
-        let r = UInt32(pixel >> 11) * 255 / 31
-        let g = UInt32((pixel >> 5) & 0x3F) * 255 / 63
-        let b = UInt32(pixel & 0x1F) * 255 / 31
-        return 0xFF00_0000 | r << 16 | g << 8 | b
+        0xFF00_0000 | red5[Int(pixel >> 11)] | green6[Int((pixel >> 5) & 0x3F)] | blue5[Int(pixel & 0x1F)]
     }
 
     /// Premultiplied source-over.

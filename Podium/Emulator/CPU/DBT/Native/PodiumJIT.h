@@ -20,6 +20,12 @@ typedef enum {
 /// hand out memory that can be both written and run.
 bool podium_jit_debugger_attached(void);
 
+/// Why the last `podium_jit_allocate` returned NULL, as a short static
+/// string (empty if it never failed): so the app can say "no debugger"
+/// vs "debugger attached but its JIT script didn't prepare the region"
+/// instead of just "no JIT".
+const char *podium_jit_last_error(void);
+
 /// Allocates `size` bytes for translated code, once per process: never
 /// call it again after it succeeds (every extra request is another round
 /// trip to the debugger). Returns where the code runs from and stores

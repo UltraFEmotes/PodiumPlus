@@ -19,6 +19,18 @@ bool podium_jit_debugger_attached(void) {
     return csops(getpid(), 0, &flags, sizeof(flags)) == 0 && (flags & CS_DEBUGGED) != 0;
 }
 
+/// The last allocation failure, for the UI. Written once per failed call;
+/// callers only ever read it, so no locking.
+static char last_error[256];
+
+const char *podium_jit_last_error(void) {
+    return last_error;
+}
+
+static void record_error(const char *message) {
+    snprintf(last_error, sizeof(last_error), "%s", message);
+}
+
 #if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
 
 // StikDebug's JIT26 protocol: `brk #0xf00d` with the command in x16.
@@ -81,22 +93,31 @@ void *podium_jit_allocate(size_t size, void **writable, PodiumJITMode *mode) {
     if (rwx != MAP_FAILED) {
         *writable = rwx;
         *mode = PodiumJITModeRWX;
+        last_error[0] = '\0';
         fprintf(stderr, "[podium-jit] RWX MAP_JIT region at %p, %zu bytes\n", rwx, size);
         return rwx;
     }
-    fprintf(stderr, "[podium-jit] RWX MAP_JIT refused (errno %d)\n", errno);
+    {
+        char message[256];
+        snprintf(message, sizeof(message), "RWX MAP_JIT refused (errno %d)", errno);
+        record_error(message);
+        fprintf(stderr, "[podium-jit] %s\n", message);
+    }
 
 #if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
     if (!podium_jit_debugger_attached()) {
+        record_error("no debugger attached; launch from StikDebug for JIT");
         fprintf(stderr, "[podium-jit] no debugger attached; no JIT\n");
         return NULL;
     }
     void *executable = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (executable == MAP_FAILED) {
+        record_error("executable region refused by the kernel");
         fprintf(stderr, "[podium-jit] RX region refused (errno %d)\n", errno);
         return NULL;
     }
     if (!guarded(jit26_prepare_region, executable, size)) {
+        record_error("debugger didn't prepare the region (StikDebug JIT script missing?)");
         fprintf(stderr, "[podium-jit] the debugger didn't prepare the region (no JIT26 script?)\n");
         munmap(executable, size);
         return NULL;
@@ -108,6 +129,7 @@ void *podium_jit_allocate(size_t size, void **writable, PodiumJITMode *mode) {
     kern_return_t result = vm_remap(mach_task_self(), &alias, size, 0, VM_FLAGS_ANYWHERE, mach_task_self(),
                                     (vm_address_t)executable, false, &current, &maximum, VM_INHERIT_DEFAULT);
     if (result != KERN_SUCCESS || mprotect((void *)alias, size, PROT_READ | PROT_WRITE) != 0) {
+        record_error("writable alias for the region failed");
         fprintf(stderr, "[podium-jit] writable alias failed (kr %d, errno %d)\n", result, errno);
         if (result == KERN_SUCCESS) vm_deallocate(mach_task_self(), alias, size);
         munmap(executable, size);
@@ -115,9 +137,11 @@ void *podium_jit_allocate(size_t size, void **writable, PodiumJITMode *mode) {
     }
     *writable = (void *)alias;
     *mode = PodiumJITModeDualMapped;
+    last_error[0] = '\0';
     fprintf(stderr, "[podium-jit] dual-mapped region: runs at %p, written at %p, %zu bytes\n", executable, (void *)alias, size);
     return executable;
 #else
+    record_error("JIT needs a real iOS device (or macOS); not the simulator");
     return NULL;
 #endif
 }

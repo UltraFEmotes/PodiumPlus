@@ -115,10 +115,20 @@ final class MultitouchN1: SPISlave {
         var velocityX = 0.0
         var velocityY = 0.0
         var state: UInt8
+        var lastTime: UInt32
     }
-    private var finger: Finger?
-    /// Frames waiting to be read, oldest first.
+    /// The fingers on the sensor, by host touch ID. A Zephyr2 path frame
+    /// carries one 28-byte record per finger, each with its own path ID,
+    /// so a second finger no longer overwrites the first.
+    private var fingers: [Int: Finger] = [:]
+    /// How many fingers the sensor reports at once (the device's own
+    /// limit); further simultaneous touches are ignored, not merged.
+    private static let maxFingers = 5
+    /// Frames waiting to be read, oldest first. Capped: if the driver
+    /// stops reading, newer state supersedes older frames instead of
+    /// piling up without bound.
     private var frames: [[UInt8]] = []
+    private static let maxQueuedFrames = 32
     /// A frame's length is loaded and ATN is pulled low for it.
     private var announcing = false
     /// The host has asked for something whose answer is loaded and not
@@ -126,7 +136,6 @@ final class MultitouchN1: SPISlave {
     private var answerPending = false
     private var lastPacket: [UInt8] = []
     private var frameNumber: UInt8 = 0
-    private var lastFrameTime: UInt32 = 0
 
     init() {
         reply = Self.repeated(Self.statusOK)
@@ -136,7 +145,7 @@ final class MultitouchN1: SPISlave {
     func reset() {
         mode = .bootloader
         reply = Self.repeated(Self.statusOK)
-        finger = nil
+        fingers.removeAll()
         frames.removeAll()
         announcing = false
         answerPending = false
@@ -170,30 +179,37 @@ final class MultitouchN1: SPISlave {
 
     /// A finger landing on, moving across or leaving the screen, at
     /// `x`, `y` as fractions of its width and height from the top left.
-    /// `time` is the guest's clock in milliseconds.
-    func touch(_ phase: Phase, x: Double, y: Double, time: UInt32) {
+    /// `touchID` distinguishes simultaneous fingers; `time` is the guest's
+    /// clock in milliseconds. Moves and lifts for an unknown finger are
+    /// ignored — they come from a tap the controller never saw land (or
+    /// one it already forgot after a reset), and inventing a touch for
+    /// them would stick a phantom finger to the sensor.
+    func touch(_ phase: Phase, x: Double, y: Double, touchID: Int, time: UInt32) {
         let sensorX = x.clamped * Double(Self.surfaceWidth)
         let sensorY = (1 - y.clamped) * Double(Self.surfaceHeight)
         switch phase {
         case .began:
-            finger = Finger(x: sensorX, y: sensorY, state: 3) // MakeTouch
+            guard fingers.count < Self.maxFingers else { return }
+            fingers[touchID] = Finger(x: sensorX, y: sensorY, state: 3, lastTime: time) // MakeTouch
         case .moved:
-            guard var current = finger else { return }
-            let elapsed = Double(max(1, time &- lastFrameTime)) / 1000
+            guard var current = fingers[touchID] else { return }
+            let elapsed = Double(max(1, time &- current.lastTime)) / 1000
             current.velocityX = (sensorX - current.x) / elapsed
             current.velocityY = (sensorY - current.y) / elapsed
             current.x = sensorX
             current.y = sensorY
             current.state = 4 // Touching
-            finger = current
+            current.lastTime = time
+            fingers[touchID] = current
         case .ended:
-            guard var current = finger else { return }
+            guard var current = fingers[touchID] else { return }
             current.x = sensorX
             current.y = sensorY
             current.velocityX = 0
             current.velocityY = 0
             current.state = 5 // BreakTouch: lifted, still in range
-            finger = current
+            current.lastTime = time
+            fingers[touchID] = current
         }
         emitFrame(time: time)
     }
@@ -203,40 +219,44 @@ final class MultitouchN1: SPISlave {
     /// frame with no fingers ends the gesture — a lift, where going out of
     /// range while still touching would read as a cancel.
     func scan(time: UInt32) {
-        guard finger != nil, frames.isEmpty else { return }
+        guard !fingers.isEmpty, frames.isEmpty else { return }
         emitFrame(time: time)
     }
 
     private func emitFrame(time: UInt32) {
-        guard mode == .firmware else { return }
-        var fingers: [[UInt8]] = []
-        if let current = finger {
-            if current.state != 0 { fingers.append(Self.fingerRecord(current)) }
+        guard mode == .firmware, !fingers.isEmpty else { return }
+        var records: [[UInt8]] = []
+        for (slot, id) in fingers.keys.sorted().enumerated() {
+            guard var current = fingers[id], current.state != 0 else {
+                fingers.removeValue(forKey: id)
+                continue
+            }
+            records.append(Self.fingerRecord(current, pathID: UInt8(slot + 1)))
             switch current.state {
-            case 3: finger?.state = 4 // MakeTouch, then Touching
-            case 5: finger?.state = 7 // BreakTouch, then OutOfRange
-            case 7: finger?.state = 0 // then an empty frame
-            case 0: finger = nil
+            case 3: current.state = 4 // MakeTouch, then Touching
+            case 5: current.state = 7 // BreakTouch, then OutOfRange
+            case 7: current.state = 0 // then an empty frame
             default: break
             }
+            fingers[id] = current
         }
         var header = [UInt8](repeating: 0, count: 24)
         header[0] = 0x44 // path frame
         header[1] = frameNumber
         header[2] = 24
         header.replaceSubrange(4..<8, with: Self.le32(time))
-        header[16] = UInt8(fingers.count)
+        header[16] = UInt8(records.count)
         header[17] = 28
         frameNumber &+= 1
-        lastFrameTime = time
-        frames.append(header + fingers.flatMap { $0 })
+        if frames.count >= Self.maxQueuedFrames { frames.removeFirst() }
+        frames.append(header + records.flatMap { $0 })
         announceIfIdle()
     }
 
-    private static func fingerRecord(_ finger: Finger) -> [UInt8] {
+    private static func fingerRecord(_ finger: Finger, pathID: UInt8) -> [UInt8] {
         let touching = finger.state == 3 || finger.state == 4
         var record = [UInt8](repeating: 0, count: 28)
-        record[0] = 1 // path ID
+        record[0] = pathID
         record[1] = finger.state
         record[2] = 2
         record[3] = 1

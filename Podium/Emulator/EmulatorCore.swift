@@ -58,6 +58,9 @@ final class EmulatorCore {
     private static let logCapacity = 200
 
     private var pollTask: Task<Void, Never>?
+    /// A lock-screen check in flight (they composite a full guest frame,
+    /// so only one runs at a time).
+    private var lockScreenCheck: Task<Void, Never>?
     /// What the running machine was powered on with, so a restart iOS
     /// asks for can power it straight back on.
     private var poweredOnWith: (firmware: ImportedFirmware, fileURL: URL)?
@@ -143,6 +146,11 @@ final class EmulatorCore {
             bootStage = .booting(fraction: 0, secondsRemaining: nil)
             session.start()
             appendLog("Kernel loaded; iOS is starting.")
+            if (session.cpu as? ARMv7CPU)?.dbt != nil {
+                appendLog("JIT active (\(JITMemory.modeName)); guest code runs natively.")
+            } else {
+                appendLog("JIT unavailable (\(JITMemory.unavailableReason ?? "unknown reason")); interpreting instead.")
+            }
             startPolling()
         } catch let error as FriendlyError {
             fail(error.userMessage, detail: error.developerDetail)
@@ -165,6 +173,8 @@ final class EmulatorCore {
         }
         pollTask?.cancel()
         pollTask = nil
+        lockScreenCheck?.cancel()
+        lockScreenCheck = nil
         self.session = nil
         framebufferSource = nil
         bootStage = nil
@@ -207,24 +217,40 @@ final class EmulatorCore {
             instructionsPerSecond = Double(last.retired - first.retired) / last.time.timeIntervalSince(first.time)
         }
         guard case .booting = bootStage else { return }
-        if Self.lockScreenIsUp(session.display) {
-            bootStage = .running
-            status = .running
-            UserDefaults.standard.set(Double(snapshot.retiredInstructions), forKey: Self.measuredBootInstructionsKey)
-            appendLog("Lock screen up after \(snapshot.retiredInstructions) instructions.")
-            return
-        }
         let expected = expectedBootInstructions
         let done = Double(snapshot.retiredInstructions)
         let fraction = min(done / expected, 0.99)
         let remaining = instructionsPerSecond > 0 ? max(expected - done, 0) / instructionsPerSecond : nil
         bootStage = .booting(fraction: fraction, secondsRemaining: remaining)
+        checkLockScreen(session: session, retiredInstructions: snapshot.retiredInstructions)
+    }
+
+    /// Whether the lock screen is up yet. Composites a whole guest frame,
+    /// so it runs off the main thread — boot progress would stutter
+    /// otherwise.
+    private func checkLockScreen(session: EmulationSession, retiredInstructions: UInt64) {
+        guard lockScreenCheck == nil else { return }
+        lockScreenCheck = Task.detached(priority: .utility) {
+            let up = Self.lockScreenIsUp(session.display)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.lockScreenCheck = nil
+                guard up, self.session === session, case .booting = self.bootStage else { return }
+                self.bootStage = .running
+                self.status = .running
+                UserDefaults.standard.set(Double(retiredInstructions), forKey: Self.measuredBootInstructionsKey)
+                self.appendLog("Lock screen up after \(retiredInstructions) instructions.")
+            }
+        }
     }
 
     /// The boot screens (Apple logo, SpringBoard's logo flare) are almost
     /// all black or a dark glow; the lock screen is a bright, full-screen
     /// wallpaper.
-    static func lockScreenIsUp(_ display: DisplayScanout) -> Bool {
+    ///
+    /// Nonisolated so the boot poll can run it off the main thread; it
+    /// only reads the scanout, which tolerates racing the CPU by design.
+    nonisolated static func lockScreenIsUp(_ display: DisplayScanout) -> Bool {
         guard !display.activeLayers.isEmpty else { return false }
         let width = display.pixelWidth, height = display.pixelHeight
         var pixels = [UInt32](repeating: 0, count: width * height)
@@ -243,6 +269,8 @@ final class EmulatorCore {
         guard session === finishedSession else { return }
         pollTask?.cancel()
         pollTask = nil
+        lockScreenCheck?.cancel()
+        lockScreenCheck = nil
         bootStage = nil
         if finishedSession.hasStorageFlushFailure {
             status = .error("Guest stopped, but persistent storage couldn't be flushed. Retry Power Off before leaving.")

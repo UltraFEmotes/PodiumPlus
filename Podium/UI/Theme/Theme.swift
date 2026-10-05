@@ -11,3 +11,25 @@ enum PodiumMetrics {
     static let cardCornerRadius: CGFloat = 16
     static let controlCornerRadius: CGFloat = 12
 }
+
+/// The shared card treatment — filled secondary background, hairline
+/// border — so cards across screens match instead of each inlining its
+/// own background + stroke.
+struct PodiumCard: ViewModifier {
+    var cornerRadius: CGFloat = PodiumMetrics.cardCornerRadius
+
+    func body(content: Content) -> some View {
+        content
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+            }
+    }
+}
+
+extension View {
+    func podiumCard(cornerRadius: CGFloat = PodiumMetrics.cardCornerRadius) -> some View {
+        modifier(PodiumCard(cornerRadius: cornerRadius))
+    }
+}

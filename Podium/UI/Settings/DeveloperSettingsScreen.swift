@@ -18,7 +18,7 @@ struct DeveloperSettingsScreen: View {
             Section("CPU") {
                 LabeledContent("Target Architecture", value: "ARMv7 (Apple A4)")
                 if let armCPU {
-                    LabeledContent("Status", value: "Interpreter active")
+                    LabeledContent("Status", value: armCPU.dbt != nil ? "JIT + interpreter" : "Interpreter active")
                     LabeledContent("PC", value: hex(armCPU.registers.pc))
                     LabeledContent("CPSR Flags", value: cpsrSummary(armCPU.cpsr))
                     if let error = armCPU.lastError {
@@ -40,18 +40,27 @@ struct DeveloperSettingsScreen: View {
             }
 
             Section {
-                if let jit = armCPU?.jit {
-                    LabeledContent("Available", value: jit.isAvailable ? "Yes" : "No — interpreting only")
-                    LabeledContent("Compiled Blocks", value: "\(jit.stats.compiledBlockCount)")
-                    LabeledContent("Cache Hits", value: "\(jit.stats.cacheHitCount)")
-                    LabeledContent("Interpreter Fallbacks", value: "\(jit.stats.interpreterFallbackCount)")
+                if let dbt = armCPU?.dbt {
+                    let stats = dbt.statistics
+                    LabeledContent("Status", value: "Active (\(jitModeName))")
+                    LabeledContent("Blocks Translated", value: "\(stats.blocksTranslated)")
+                    LabeledContent("Block Entries", value: "\(stats.entries)")
+                    LabeledContent("Deopts", value: "\(stats.deopts)")
+                    LabeledContent("Region Flushes", value: "\(stats.flushes)")
+                } else if armCPU != nil {
+                    LabeledContent("Status", value: "Not active — interpreting only")
+                    if let reason = JITMemory.unavailableReason {
+                        Text(reason)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     LabeledContent("Status", value: "Not active")
                 }
             } header: {
                 Text("JIT")
             } footer: {
-                Text("On iOS, native code execution normally requires a debugger-granted right this app doesn't request by default — \"No\" here usually means that, not a bug.")
+                Text("On iOS, native code execution needs a debugger-granted right: launch Podium+ from StikDebug. Attaching it later works too — power the iPod off and back on.")
             }
 
             Section("Memory") {
@@ -89,6 +98,9 @@ struct DeveloperSettingsScreen: View {
     private func hex(_ value: UInt32) -> String {
         "0x" + value.hexString8
     }
+
+    /// How the translator's code region was obtained, for the JIT status.
+    private var jitModeName: String { JITMemory.modeName }
 
     private func registerName(_ index: Int) -> String {
         switch index {

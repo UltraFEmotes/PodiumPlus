@@ -1,6 +1,6 @@
-# Podium
+# Podium+
 
-Podium is an **iPod Touch** emulator for iOS. Currently, these are the supported iOS versions:
+Podium+ (PodiumPlus) is an **iPod Touch** emulator for iOS, forked from [Leviidev/Podium](https://github.com/Leviidev/Podium). Currently, these are the supported iOS versions:
 
 | Device               | iOS Version |
 | -------------------- | ----------- |

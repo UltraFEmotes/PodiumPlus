@@ -3,7 +3,7 @@ import os
 /// Central place to obtain subsystem loggers so log categories stay
 /// consistent across modules instead of ad-hoc string literals.
 enum PodiumLog {
-    private static let subsystem = "com.leviidev.podium"
+    private static let subsystem = "com.ultrafemotes.podiumplus"
 
     static let firmware = Logger(subsystem: subsystem, category: "firmware")
     static let emulator = Logger(subsystem: subsystem, category: "emulator")

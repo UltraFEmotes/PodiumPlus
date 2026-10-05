@@ -3,7 +3,6 @@ import SwiftUI
 struct EmulatorScreen: View {
     @Environment(FirmwareLibrary.self) private var firmwareLibrary
     @Environment(EmulatorCore.self) private var emulatorCore
-    @State private var touchActive = false
 
     private var firmware: ImportedFirmware? {
         firmwareLibrary.activeFirmware
@@ -31,9 +30,15 @@ struct EmulatorScreen: View {
 
                     screen
                         .frame(width: displayWidth, height: displayHeight)
+                        .overlay { TouchCaptureView(onEvent: emulatorCore.sendInput) }
                         .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        .contentShape(Rectangle())
-                        .gesture(touchGesture(in: CGSize(width: displayWidth, height: displayHeight)))
+                        .padding(10)
+                        .background(Color.black, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                        }
+                        .shadow(color: .black.opacity(0.35), radius: 18, y: 8)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .frame(maxHeight: min(geometry.size.height * 0.68, 610))
@@ -68,11 +73,25 @@ struct EmulatorScreen: View {
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                VStack(spacing: 1) {
-                    Text("Podium").font(.headline)
-                    Text(emulatorCore.status.label)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 3) {
+                    Text("Podium+").font(.headline)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(statusColor)
+                            .frame(width: 6, height: 6)
+                        Text(emulatorCore.status.label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if emulatorCore.isPoweredOn {
+                            Text(emulatorCore.jitAvailable ? "JIT" : "Interpreter")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(emulatorCore.jitAvailable ? Color.green.opacity(0.15) : Color.secondary.opacity(0.12), in: Capsule())
+                                .foregroundStyle(emulatorCore.jitAvailable ? .green : .secondary)
+                        }
+                    }
                 }
             }
             if emulatorCore.isPoweredOn || emulatorCore.storageFlushFailure != nil {
@@ -132,33 +151,15 @@ struct EmulatorScreen: View {
         }
     }
 
-    /// One finger on the virtual touchscreen: down, moves, up.
-    private func touchGesture(in size: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                let point = devicePoint(from: value.location, in: size)
-                if touchActive {
-                    emulatorCore.sendInput(.touchMoved(point))
-                } else {
-                    touchActive = true
-                    emulatorCore.sendInput(.touchBegan(point))
-                }
-            }
-            .onEnded { value in
-                touchActive = false
-                emulatorCore.sendInput(.touchEnded(devicePoint(from: value.location, in: size)))
-            }
-    }
-
-    /// Maps a location in the displayed screen to the device's own
-    /// 640×960 pixel coordinates.
-    private func devicePoint(from location: CGPoint, in size: CGSize) -> TouchPoint {
-        guard size.width > 0, size.height > 0 else {
-            return TouchPoint(x: 0, y: 0, touchID: 0)
+    /// The toolbar status dot: green while the guest runs, amber while it
+    /// boots, red on error, gray otherwise.
+    private var statusColor: Color {
+        switch emulatorCore.status {
+        case .running: .green
+        case .booting, .ready: .orange
+        case .error: .red
+        case .notImplemented, .paused, .stopped: .gray
         }
-        let x = min(max(location.x / size.width, 0), 1) * 640
-        let y = min(max(location.y / size.height, 0), 1) * 960
-        return TouchPoint(x: x, y: y, touchID: 0)
     }
 }
 

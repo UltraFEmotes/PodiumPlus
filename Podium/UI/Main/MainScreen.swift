@@ -44,7 +44,7 @@ struct MainScreen: View {
 
     private var header: some View {
         VStack(spacing: 5) {
-            Text("PODIUM")
+            Text("PODIUM+")
                 .font(.caption.weight(.bold))
                 .tracking(2.4)
                 .foregroundStyle(.blue)
@@ -129,11 +129,7 @@ struct MainScreen: View {
             .buttonStyle(.plain)
         }
         .padding(17)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
-        }
+        .podiumCard(cornerRadius: 20)
         .frame(maxWidth: 380)
         .frame(maxWidth: .infinity)
     }
