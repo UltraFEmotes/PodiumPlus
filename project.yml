@@ -30,7 +30,7 @@ targets:
         # The binary is renamed but the Swift module stays Podium, so
         # existing imports (`@testable import Podium`) keep working.
         PRODUCT_MODULE_NAME: Podium
-        DEVELOPMENT_TEAM: H6WR7UCPC9
+        DEVELOPMENT_TEAM: 3YX7M8FJKU
         CODE_SIGN_STYLE: Automatic
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -63,7 +63,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ultrafemotes.podiumplus.tests
-        DEVELOPMENT_TEAM: H6WR7UCPC9
+        DEVELOPMENT_TEAM: 3YX7M8FJKU
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: "YES"
         # The app product is renamed to PodiumPlus while the target is
